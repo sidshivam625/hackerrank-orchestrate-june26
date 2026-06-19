@@ -423,6 +423,14 @@ class GeminiVLMAgent:
         )
         pre_flags = set(ctx.image_quality_flags + ctx.computed_risk_flags)
 
+        # Forcefully remove flags that the model is NOT allowed to predict
+        forbidden_model_flags = {
+            "blurry_image", "cropped_or_obstructed", "low_light_or_glare",
+            "user_history_risk", "manual_review_required", "non_original_image",
+            "possible_manipulation"
+        }
+        model_flags = model_flags - forbidden_model_flags
+
         merged = model_flags | pre_flags
         if not merged:
             merged = {"none"}

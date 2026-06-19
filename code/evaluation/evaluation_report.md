@@ -15,22 +15,22 @@
 
 ## 2. Primary Metric — `claim_status` Performance
 
-**Overall Accuracy: 0.750 | Macro F1: 0.684**
+**Overall Accuracy: 0.850 | Macro F1: 0.869**
 
 ### Per-Class Breakdown
 
 | Class                     | Precision | Recall | F1    | Support |
 |---------------------------|-----------|--------|-------|---------|
-| supported                 | 0.786     | 0.846  | 0.815 | 13       |
-| contradicted              | 1.000     | 0.400  | 0.571 | 5       |
-| not_enough_information    | 0.500     | 1.000  | 0.667 | 2       |
+| supported                 | 0.917     | 0.846  | 0.880 | 13       |
+| contradicted              | 0.667     | 0.800  | 0.727 | 5       |
+| not_enough_information    | 1.000     | 1.000  | 1.000 | 2       |
 
 ### Confusion Matrix
 
 ```
 Predicted →     supported     contradict    not_enough  
-Actual supported   : 11            0             2           
-Actual contradict  : 3             2             0           
+Actual supported   : 11            2             0           
+Actual contradict  : 1             4             0           
 Actual not_enough  : 0             0             2           
 ```
 
@@ -40,22 +40,22 @@ Actual not_enough  : 0             0             2
 
 | Field                   | Metric         | Score    |
 |-------------------------|----------------|----------|
-| `issue_type`            | Accuracy       | 0.700  |
-| `issue_type`            | Weighted F1    | 0.682  |
-| `object_part`           | Accuracy       | 0.850  |
-| `object_part`           | Weighted F1    | 0.867  |
-| `severity`              | Accuracy       | 0.750  |
-| `severity`              | Weighted F1    | 0.706  |
-| `severity`              | Ordinal MAE    | 0.294  |
-| `evidence_standard_met` | Accuracy       | 0.850  |
-| `evidence_standard_met` | F1             | 0.909  |
-| `valid_image`           | Accuracy       | 0.800  |
-| `valid_image`           | F1             | 0.882  |
-| `risk_flags`            | Exact Accuracy | 0.250  |
-| `risk_flags`            | Macro F1       | 0.519  |
-| `risk_flags`            | Jaccard (avg)  | 0.504  |
-| `supporting_image_ids`  | Exact Accuracy | 0.900  |
-| `supporting_image_ids`  | Macro F1       | 0.884  |
+| `issue_type`            | Accuracy       | 0.800  |
+| `issue_type`            | Weighted F1    | 0.799  |
+| `object_part`           | Accuracy       | 0.900  |
+| `object_part`           | Weighted F1    | 0.917  |
+| `severity`              | Accuracy       | 0.800  |
+| `severity`              | Weighted F1    | 0.807  |
+| `severity`              | Ordinal MAE    | 0.278  |
+| `evidence_standard_met` | Accuracy       | 0.900  |
+| `evidence_standard_met` | F1             | 0.941  |
+| `valid_image`           | Accuracy       | 0.900  |
+| `valid_image`           | F1             | 0.944  |
+| `risk_flags`            | Exact Accuracy | 0.400  |
+| `risk_flags`            | Macro F1       | 0.477  |
+| `risk_flags`            | Jaccard (avg)  | 0.608  |
+| `supporting_image_ids`  | Exact Accuracy | 0.850  |
+| `supporting_image_ids`  | Macro F1       | 0.867  |
 
 ---
 
@@ -64,30 +64,30 @@ Actual not_enough  : 0             0             2
 The following claims had the most prediction errors:
 
 
-### Case 1: user_020 (laptop)
-- **Claim snippet**: Customer: The laptop trackpad has stopped working properly. | Support: Did anyth…
-- **Errors**: claim_status: expected=contradicted, got=supported; issue_type: expected=none, got=scratch; object_part: expected=trackpad, got=base
-- **Predicted justification**: img_1 shows a small scratch on the laptop's base adjacent to the trackpad, which aligns with the user's claim of 'physical damage around the trackpad 
-
-### Case 2: user_002 (car)
-- **Claim snippet**: Customer: Parking lot mein meri car ko scrape lag gaya. | Support: Aap kis type …
-- **Errors**: claim_status: expected=supported, got=not_enough_information; issue_type: expected=scratch, got=unknown
-- **Predicted justification**: The provided images are of two different cars. img_1 shows a car with severe front bumper damage, while img_2 shows a different, undamaged car. This c
-
-### Case 3: user_034 (package)
+### Case 1: user_034 (package)
 - **Claim snippet**: Customer: My delivery box arrived opened. | Support: Was the package crushed or …
 - **Errors**: claim_status: expected=contradicted, got=supported; issue_type: expected=none, got=torn_packaging
-- **Predicted justification**: img_1 shows a cardboard box with a torn security tape and ripped cardboard at the seal, which visually supports the user's claim of a torn-open packag
+- **Predicted justification**: img_1 provides clear visual evidence of a torn seal and damaged cardboard, directly supporting the user's claim. The text instruction on the sticky no
+
+### Case 2: user_001 (car)
+- **Claim snippet**: Customer: Hi, I found new damage on my car after it was parked outside overnight…
+- **Errors**: claim_status: expected=supported, got=contradicted; issue_type: expected=dent, got=broken_part
+- **Predicted justification**: The user claimed a 'dent' on the rear bumper, but img_1 shows catastrophic damage including a missing bumper cover and a severely crushed trunk lid. T
+
+### Case 3: user_002 (car)
+- **Claim snippet**: Customer: Parking lot mein meri car ko scrape lag gaya. | Support: Aap kis type …
+- **Errors**: claim_status: expected=supported, got=contradicted; issue_type: expected=scratch, got=none
+- **Predicted justification**: The user claimed a minor scratch on the front bumper. However, img_2 shows a car with a completely undamaged front bumper, directly contradicting the 
 
 ### Case 4: user_008 (car)
 - **Claim snippet**: Customer: I picked up my car after service and noticed a mark on the hood. | Sup…
-- **Errors**: claim_status: expected=contradicted, got=supported; object_part: expected=front_bumper, got=hood
-- **Predicted justification**: The user claimed a minor scratch on the hood, but img_1 shows the entire front of the car is severely wrecked. The claim is supported because damage i
+- **Errors**: object_part: expected=front_bumper, got=hood
+- **Predicted justification**: The user claimed a minor scratch on the hood, but img_1 shows a completely wrecked vehicle with catastrophic damage to the entire front end, including
 
-### Case 5: user_031 (package)
-- **Claim snippet**: Customer: I received a package that looks water damaged. | Support: Was the item…
-- **Errors**: claim_status: expected=supported, got=not_enough_information
-- **Predicted justification**: img_1 shows a large, dark stain on the side of the cardboard box, which is consistent with the user's claim of water damage. The cardboard also appear
+### Case 5: user_007 (car)
+- **Claim snippet**: Customer: Someone clipped my car while it was parked. | Support: What part was h…
+- **Errors**: issue_type: expected=broken_part, got=crack
+- **Predicted justification**: img_1 clearly shows the glass of the side mirror is cracked with a spider-web pattern, which directly supports the user's claim of a damaged side mirr
 
 
 ---

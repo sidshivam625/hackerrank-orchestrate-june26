@@ -141,9 +141,14 @@ class PostProcessor:
             else "not_enough_information"
         )
 
-        # 5.1 Contradiction resolution
-        if claim_status == "supported" and "wrong_object" in risk_flags:
-            claim_status = "contradicted"
+        # 5.1 Logical consistency: supported claims cannot have contradiction flags
+        if claim_status == "supported":
+            contradiction_flags = {"claim_mismatch", "damage_not_visible", "wrong_object", "wrong_object_part"}
+            current_flags = set(f.strip() for f in risk_flags.split(";") if f.strip() and f.strip() != "none")
+            cleaned_flags = current_flags - contradiction_flags
+            risk_flags = ";".join(sorted(cleaned_flags)) if cleaned_flags else "none"
+
+
 
         # 6. Validate and override severity
         severity = result.severity if result.severity in VALID_SEVERITY else "unknown"

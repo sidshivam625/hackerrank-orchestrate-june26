@@ -68,9 +68,9 @@ class ImageValidator:
 
     def __init__(
         self,
-        blur_threshold: float = 45.0,
-        brightness_min: float = 50.0,
-        brightness_max: float = 210.0,
+        blur_threshold: float = 10.0,
+        brightness_min: float = 20.0,
+        brightness_max: float = 240.0,
         entropy_threshold: float = 3.0,
         min_width: int = 200,
         min_height: int = 200,
@@ -112,13 +112,14 @@ class ImageValidator:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         flags: List[str] = []
-        is_valid = True  # Only set False for blur (skips VLM call)
+        is_valid = True
 
-        # ---- 1. Blur detection (Laplacian variance) ----
+        # ---- 2. Blur detection (Laplacian variance) ----
+        # A higher variance means more edges (less blur).
         blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         if blur_score < self.blur_threshold:
             flags.append("blurry_image")
-            is_valid = False  # Blurry → skip VLM, can't evaluate
+            # We no longer set is_valid = False because many phone photos are flagged but still legible.
 
         # ---- 2. Brightness / exposure ----
         brightness = float(np.mean(gray))
