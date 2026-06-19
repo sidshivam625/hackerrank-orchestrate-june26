@@ -81,6 +81,8 @@ class GeminiVLMAgent:
         enable_cache: bool = True,
         rejection_ratio_threshold: float = 0.35,
         velocity_threshold: int = 3,
+        self_consistency_samples: int = 1,
+        sample_temperature: float = 0.4,
     ):
         self.model_name = model_name
         self.max_concurrent = max_concurrent
@@ -88,6 +90,10 @@ class GeminiVLMAgent:
         self.enable_cache = enable_cache
         self.rejection_ratio_threshold = rejection_ratio_threshold
         self.velocity_threshold = velocity_threshold
+        # Self-consistency: draw K samples and majority-vote. K=1 disables it
+        # (deterministic temperature-0 single pass).
+        self.self_consistency_samples = max(1, int(self_consistency_samples))
+        self.sample_temperature = sample_temperature
 
         self.use_vertex = False
         self.project_id = ""
@@ -228,7 +234,28 @@ class GeminiVLMAgent:
         Uses the semaphore to enforce concurrency limits.
         """
         async with self._semaphore:
-            return await self._analyse_with_retry(ctx, ingestion_engine)
+            if self.self_consistency_samples <= 1:
+                # Single pass. PRIMARY_TEMPERATURE defaults to 0.0 (deterministic).
+                import os as _os
+                t = float(_os.environ.get("PRIMARY_TEMPERATURE", "0.0"))
+                return await self._analyse_with_retry(ctx, ingestion_engine, t)
+
+            # Self-consistency: draw K diverse samples then majority-vote.
+            results: List[ClaimAnalysisResult] = []
+            for _ in range(self.self_consistency_samples):
+                results.append(
+                    await self._analyse_with_retry(
+                        ctx, ingestion_engine, self.sample_temperature
+                    )
+                )
+            voted = self._vote(results)
+            logger.info(
+                "Self-consistency for %s: %s -> %s",
+                ctx.user_id,
+                [r.claim_status for r in results],
+                voted.claim_status,
+            )
+            return voted
 
     def analyse_claim_sync(
         self,
@@ -246,6 +273,7 @@ class GeminiVLMAgent:
         self,
         ctx: ClaimContext,
         ingestion_engine: DataIngestionEngine,
+        temperature: float = 0.0,
     ) -> ClaimAnalysisResult:
         """Retry loop with exponential backoff + schema validation retry."""
         import random
@@ -257,7 +285,7 @@ class GeminiVLMAgent:
             try:
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda: self._call_gemini(ctx, ingestion_engine, validation_error_msg),
+                    lambda: self._call_gemini(ctx, ingestion_engine, validation_error_msg, temperature),
                 )
                 return result
 
@@ -297,6 +325,7 @@ class GeminiVLMAgent:
         ctx: ClaimContext,
         ingestion_engine: DataIngestionEngine,
         validation_error_msg: str = "",
+        temperature: float = 0.0,
     ) -> ClaimAnalysisResult:
         """Build prompt, call Gemini, parse and validate response."""
         # Build the per-claim user-turn prompt
@@ -305,9 +334,13 @@ class GeminiVLMAgent:
         if self.use_vertex:
             from vertexai.generative_models import Part, GenerationConfig as VertexGenerationConfig
             content_parts: List[Any] = [user_prompt]
-            
+
             for img_path in ctx.image_path_list:
                 try:
+                    # Anchor each image to its image_id so the model can ground
+                    # supporting_image_ids correctly on multi-image claims.
+                    image_id = Path(img_path).stem
+                    content_parts.append(f"=== IMAGE {image_id} ===")
                     inline = _image_to_inline_data(img_path)
                     raw_bytes = base64.b64decode(inline["data"])
                     part = Part.from_data(data=raw_bytes, mime_type=inline["mime_type"])
@@ -319,15 +352,18 @@ class GeminiVLMAgent:
             generation_config = {
                 "response_mime_type": "application/json",
                 "response_schema": GEMINI_RESPONSE_SCHEMA,
-                "temperature": 0.1,
+                "temperature": temperature,   # 0.0 single-pass; >0 for self-consistency samples
                 "max_output_tokens": 8192,
             }
         else:
-            # Build content parts: [text_prompt, image1, image2, ...]
+            # Build content parts: [text_prompt, label1, image1, label2, image2, ...]
             content_parts = [{"text": user_prompt}]
-            
+
             for img_path in ctx.image_path_list:
                 try:
+                    # Anchor each image to its image_id (see Vertex path above).
+                    image_id = Path(img_path).stem
+                    content_parts.append({"text": f"=== IMAGE {image_id} ==="})
                     inline = _image_to_inline_data(img_path)
                     content_parts.append({"inline_data": inline})
                 except Exception as e:
@@ -336,7 +372,7 @@ class GeminiVLMAgent:
             generation_config = genai.GenerationConfig(
                 response_mime_type="application/json",
                 response_schema=GEMINI_RESPONSE_SCHEMA,
-                temperature=0.1,   # Low temperature for determinism
+                temperature=temperature,   # 0.0 single-pass; >0 for self-consistency samples
                 max_output_tokens=4096,
             )
 
@@ -423,11 +459,21 @@ class GeminiVLMAgent:
         )
         pre_flags = set(ctx.image_quality_flags + ctx.computed_risk_flags)
 
-        # Forcefully remove flags that the model is NOT allowed to predict
+        # Forcefully remove only the flags that are OWNED by a deterministic
+        # layer (OpenCV quality pre-pass + user-history rules). These are
+        # injected via `pre_flags` below, so letting the model also emit them
+        # would create duplicate / conflicting signals.
+        #
+        # NOTE: possible_manipulation and non_original_image are intentionally
+        # NOT forbidden — they are *content* authenticity judgments that only
+        # the VLM can make from the pixels (screenshot, photo-of-photo, spliced
+        # image). The rule layer never produces them, so stripping them here
+        # made it impossible for the system to ever emit them, even though the
+        # ground truth and the test set (e.g. "screenshots instead of original
+        # photos") require them.
         forbidden_model_flags = {
             "blurry_image", "cropped_or_obstructed", "low_light_or_glare",
-            "user_history_risk", "manual_review_required", "non_original_image",
-            "possible_manipulation"
+            "user_history_risk", "manual_review_required",
         }
         model_flags = model_flags - forbidden_model_flags
 
@@ -468,6 +514,65 @@ class GeminiVLMAgent:
             valid_image=False,
             severity="unknown",
         )
+
+    @staticmethod
+    def _vote(results: List[ClaimAnalysisResult]) -> ClaimAnalysisResult:
+        """
+        Majority-vote K self-consistency samples into one result.
+
+        - claim_status: plurality vote (ties broken by the more conservative
+          outcome: not_enough_information < contradicted < supported is the
+          severity of asserting damage, so on a tie prefer abstaining).
+        - issue_type / object_part / severity / valid_image: modal value among
+          the samples that agree with the winning claim_status.
+        - risk_flags: a flag is kept only if it appears in a MAJORITY of
+          samples. Deterministic pre-flags (OpenCV / history) appear in every
+          sample so they always survive; inconsistent content flags (e.g. a
+          one-off possible_manipulation) are filtered out — exactly the noise
+          we want gone.
+        """
+        from collections import Counter
+
+        if len(results) == 1:
+            return results[0]
+
+        k = len(results)
+        status_counts = Counter(r.claim_status for r in results)
+        top = status_counts.most_common()
+        best = top[0][1]
+        tied = [s for s, c in top if c == best]
+        if len(tied) == 1:
+            winner = tied[0]
+        else:
+            # Tie-break: prefer the more conservative verdict.
+            order = {"not_enough_information": 0, "contradicted": 1, "supported": 2}
+            winner = min(tied, key=lambda s: order.get(s, 1))
+
+        agree = [r for r in results if r.claim_status == winner] or results
+
+        def modal(attr: str) -> Any:
+            return Counter(getattr(r, attr) for r in agree).most_common(1)[0][0]
+
+        base = agree[0]
+        base.claim_status = winner
+        base.issue_type = modal("issue_type")
+        base.object_part = modal("object_part")
+        base.severity = modal("severity")
+        base.valid_image = modal("valid_image")
+        base.evidence_standard_met = modal("evidence_standard_met")
+        base.claim_status_justification = modal("claim_status_justification")
+        base.supporting_image_ids = modal("supporting_image_ids")
+
+        threshold = (k // 2) + 1
+        flag_counts: Dict[str, int] = {}
+        for r in results:
+            for f in r.risk_flags.split(";"):
+                f = f.strip()
+                if f and f != "none":
+                    flag_counts[f] = flag_counts.get(f, 0) + 1
+        kept = sorted(f for f, c in flag_counts.items() if c >= threshold)
+        base.risk_flags = ";".join(kept) if kept else "none"
+        return base
 
     def cleanup(self) -> None:
         """Delete context cache to avoid storage charges."""

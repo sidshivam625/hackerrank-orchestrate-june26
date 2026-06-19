@@ -103,12 +103,12 @@ class ClaimsVerificationOrchestrator:
         )
         # Layer 2
         self.validator = ImageValidator(
-            blur_threshold=float(os.environ.get("BLUR_THRESHOLD", "80.0")),
-            brightness_min=float(os.environ.get("BRIGHTNESS_MIN", "50.0")),
-            brightness_max=float(os.environ.get("BRIGHTNESS_MAX", "210.0")),
+            blur_threshold=float(os.environ.get("BLUR_THRESHOLD", "12.0")),
+            brightness_min=float(os.environ.get("BRIGHTNESS_MIN", "30.0")),
+            brightness_max=float(os.environ.get("BRIGHTNESS_MAX", "235.0")),
             entropy_threshold=float(os.environ.get("ENTROPY_THRESHOLD", "3.0")),
-            min_width=int(os.environ.get("MIN_IMAGE_WIDTH", "200")),
-            min_height=int(os.environ.get("MIN_IMAGE_HEIGHT", "200")),
+            min_width=int(os.environ.get("MIN_IMAGE_WIDTH", "64")),
+            min_height=int(os.environ.get("MIN_IMAGE_HEIGHT", "64")),
         )
         # Layer 3
         self.gemini_agent = GeminiVLMAgent(
@@ -118,6 +118,8 @@ class ClaimsVerificationOrchestrator:
             enable_cache=os.environ.get("ENABLE_CONTEXT_CACHE", "true").lower() == "true",
             rejection_ratio_threshold=float(os.environ.get("USER_REJECTION_RATIO_THRESHOLD", "0.35")),
             velocity_threshold=int(os.environ.get("USER_VELOCITY_THRESHOLD", "3")),
+            self_consistency_samples=int(os.environ.get("SELF_CONSISTENCY_SAMPLES", "1")),
+            sample_temperature=float(os.environ.get("SELF_CONSISTENCY_TEMPERATURE", "0.4")),
         )
         # Layer 4
         self.qwen_agent: Optional[QwenEscalationAgent] = None

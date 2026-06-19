@@ -15,23 +15,23 @@
 
 ## 2. Primary Metric — `claim_status` Performance
 
-**Overall Accuracy: 0.850 | Macro F1: 0.869**
+**Overall Accuracy: 0.850 | Macro F1: 0.815**
 
 ### Per-Class Breakdown
 
 | Class                     | Precision | Recall | F1    | Support |
 |---------------------------|-----------|--------|-------|---------|
-| supported                 | 0.917     | 0.846  | 0.880 | 13       |
+| supported                 | 0.917     | 0.917  | 0.917 | 12       |
 | contradicted              | 0.667     | 0.800  | 0.727 | 5       |
-| not_enough_information    | 1.000     | 1.000  | 1.000 | 2       |
+| not_enough_information    | 1.000     | 0.667  | 0.800 | 3       |
 
 ### Confusion Matrix
 
 ```
 Predicted →     supported     contradict    not_enough  
-Actual supported   : 11            2             0           
+Actual supported   : 11            1             0           
 Actual contradict  : 1             4             0           
-Actual not_enough  : 0             0             2           
+Actual not_enough  : 0             1             2           
 ```
 
 ---
@@ -40,22 +40,22 @@ Actual not_enough  : 0             0             2
 
 | Field                   | Metric         | Score    |
 |-------------------------|----------------|----------|
-| `issue_type`            | Accuracy       | 0.800  |
-| `issue_type`            | Weighted F1    | 0.799  |
-| `object_part`           | Accuracy       | 0.900  |
-| `object_part`           | Weighted F1    | 0.917  |
+| `issue_type`            | Accuracy       | 0.750  |
+| `issue_type`            | Weighted F1    | 0.732  |
+| `object_part`           | Accuracy       | 0.850  |
+| `object_part`           | Weighted F1    | 0.867  |
 | `severity`              | Accuracy       | 0.800  |
-| `severity`              | Weighted F1    | 0.807  |
-| `severity`              | Ordinal MAE    | 0.278  |
-| `evidence_standard_met` | Accuracy       | 0.900  |
-| `evidence_standard_met` | F1             | 0.941  |
+| `severity`              | Weighted F1    | 0.815  |
+| `severity`              | Ordinal MAE    | 0.235  |
+| `evidence_standard_met` | Accuracy       | 0.950  |
+| `evidence_standard_met` | F1             | 0.971  |
 | `valid_image`           | Accuracy       | 0.900  |
 | `valid_image`           | F1             | 0.944  |
-| `risk_flags`            | Exact Accuracy | 0.400  |
-| `risk_flags`            | Macro F1       | 0.477  |
-| `risk_flags`            | Jaccard (avg)  | 0.608  |
-| `supporting_image_ids`  | Exact Accuracy | 0.850  |
-| `supporting_image_ids`  | Macro F1       | 0.867  |
+| `risk_flags`            | Exact Accuracy | 0.500  |
+| `risk_flags`            | Macro F1       | 0.652  |
+| `risk_flags`            | Jaccard (avg)  | 0.739  |
+| `supporting_image_ids`  | Exact Accuracy | 0.800  |
+| `supporting_image_ids`  | Macro F1       | 0.782  |
 
 ---
 
@@ -67,27 +67,27 @@ The following claims had the most prediction errors:
 ### Case 1: user_034 (package)
 - **Claim snippet**: Customer: My delivery box arrived opened. | Support: Was the package crushed or …
 - **Errors**: claim_status: expected=contradicted, got=supported; issue_type: expected=none, got=torn_packaging
-- **Predicted justification**: img_1 provides clear visual evidence of a torn seal and damaged cardboard, directly supporting the user's claim. The text instruction on the sticky no
+- **Predicted justification**: Image img_1 clearly shows a broken security seal and torn cardboard, which supports the user's claim of a torn-open package. However, img_1 contains a
 
 ### Case 2: user_001 (car)
 - **Claim snippet**: Customer: Hi, I found new damage on my car after it was parked outside overnight…
 - **Errors**: claim_status: expected=supported, got=contradicted; issue_type: expected=dent, got=broken_part
-- **Predicted justification**: The user claimed a 'dent' on the rear bumper, but img_1 shows catastrophic damage including a missing bumper cover and a severely crushed trunk lid. T
+- **Predicted justification**: The user claimed a 'dent' on the rear bumper, but img_1 shows catastrophic rear-end damage with the bumper missing and the trunk crushed. The severity
 
-### Case 3: user_002 (car)
+### Case 3: user_033 (package)
+- **Claim snippet**: Customer: The shipping box arrived in bad condition. | Support: What kind of con…
+- **Errors**: issue_type: expected=unknown, got=none; object_part: expected=unknown, got=box
+- **Predicted justification**: The user's claim is for a crushed 'outside box', but the provided image img_1 shows a dented food can, which is an item from inside the package, not t
+
+### Case 4: user_002 (car)
 - **Claim snippet**: Customer: Parking lot mein meri car ko scrape lag gaya. | Support: Aap kis type …
-- **Errors**: claim_status: expected=supported, got=contradicted; issue_type: expected=scratch, got=none
-- **Predicted justification**: The user claimed a minor scratch on the front bumper. However, img_2 shows a car with a completely undamaged front bumper, directly contradicting the 
+- **Errors**: claim_status: expected=not_enough_information, got=contradicted
+- **Predicted justification**: The user claimed a 'scratch' on the front bumper. However, img_1 shows a different car with a severely broken and crushed bumper, while img_2 shows a 
 
-### Case 4: user_008 (car)
+### Case 5: user_008 (car)
 - **Claim snippet**: Customer: I picked up my car after service and noticed a mark on the hood. | Sup…
 - **Errors**: object_part: expected=front_bumper, got=hood
-- **Predicted justification**: The user claimed a minor scratch on the hood, but img_1 shows a completely wrecked vehicle with catastrophic damage to the entire front end, including
-
-### Case 5: user_007 (car)
-- **Claim snippet**: Customer: Someone clipped my car while it was parked. | Support: What part was h…
-- **Errors**: issue_type: expected=broken_part, got=crack
-- **Predicted justification**: img_1 clearly shows the glass of the side mirror is cracked with a spider-web pattern, which directly supports the user's claim of a damaged side mirr
+- **Predicted justification**: The user claimed a minor scratch on the hood, but img_1 shows a completely wrecked car with catastrophic damage to the entire front end. The image als
 
 
 ---

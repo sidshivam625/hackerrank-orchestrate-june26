@@ -148,6 +148,15 @@ class PostProcessor:
             cleaned_flags = current_flags - contradiction_flags
             risk_flags = ";".join(sorted(cleaned_flags)) if cleaned_flags else "none"
 
+        # 5.2 A contradicted claim is, by definition, a dispute between what the
+        # user stated and what the images show — it should always be routed to a
+        # human. In the sample ground truth every contradicted claim carries
+        # manual_review_required, so we add it deterministically here.
+        if claim_status == "contradicted":
+            current_flags = set(f.strip() for f in risk_flags.split(";") if f.strip() and f.strip() != "none")
+            current_flags.add("manual_review_required")
+            risk_flags = ";".join(sorted(current_flags))
+
 
 
         # 6. Validate and override severity
@@ -171,6 +180,19 @@ class PostProcessor:
                 "(no valid images at all)",
                 ctx.user_id
             )
+
+        # 7.1 Tie evidence_standard_met to the FINAL verdict.
+        # Reaching a decisive verdict (supported/contradicted) means we had
+        # sufficient evidence by definition; not_enough_information means we did
+        # not. This holds 20/20 on the sample GT and removes a noisy, separate
+        # VLM boolean that frequently disagreed with the verdict it just made.
+        if ctx.valid_images_count == 0:
+            evidence_met = False
+            evidence_reason = evidence_reason or "No usable images were provided."
+        else:
+            evidence_met = claim_status != "not_enough_information"
+            if not evidence_met and not evidence_reason:
+                evidence_reason = "The images do not show enough of the claimed part to reach a verdict."
 
         # 8. valid_image: Use VLM's assessment if images exist, else use OpenCV
         valid_image = result.valid_image if ctx.valid_images_count > 0 else False

@@ -178,6 +178,10 @@ class QwenEscalationAgent:
                 suffix = Path(img_path).suffix.lower()
                 mime = "image/jpeg" if suffix in (".jpg", ".jpeg") else "image/png"
 
+                # Anchor each image to its image_id so supporting_image_ids is
+                # grounded correctly on multi-image claims.
+                image_id = Path(img_path).stem
+                content.append({"type": "text", "text": f"=== IMAGE {image_id} ==="})
                 content.append({
                     "type": "image_url",
                     "image_url": {
@@ -197,7 +201,7 @@ class QwenEscalationAgent:
             model=self.model_name,
             messages=messages,
             max_tokens=8192,
-            temperature=0.1,
+            temperature=0.0,   # Deterministic decoding for reproducibility
             response_format={"type": "json_object"},
         )
 
@@ -237,11 +241,19 @@ def ensemble_vote(
     """
     Combine primary (Gemini) and secondary (Qwen) results.
 
-    Voting logic:
-    - If both agree on claim_status → use that result, merge flags
-    - If they disagree → prefer the one with more specific evidence
-      (supported > contradicted > not_enough_information)
-    - Merge risk_flags from both
+    Voting logic (no directional bias):
+    - If both agree on claim_status → keep that result, merge flags.
+    - If they disagree AND the primary was uncertain
+      (`not_enough_information`) → adopt the secondary's decisive verdict,
+      because resolving that uncertainty is the whole reason we escalated.
+      Flag the row for human review.
+    - If they disagree AND the primary was already decisive
+      (`supported`/`contradicted`) → KEEP the primary verdict and flag for
+      review. We deliberately do NOT prefer "supported" over "contradicted":
+      that old tie-break inflated false positives on the contradicted class
+      (our weakest class) by overriding correct contradictions whenever the
+      second model leaned supportive.
+    - risk_flags from both models are always merged.
     """
     if secondary is None:
         return primary
@@ -251,41 +263,35 @@ def ensemble_vote(
         logger.info(
             "Ensemble: both models agree — %s", primary.claim_status
         )
-        merged = _merge_flags(primary.risk_flags, secondary.risk_flags)
-        primary.risk_flags = merged
+        primary.risk_flags = _merge_flags(primary.risk_flags, secondary.risk_flags)
         return primary
 
-    # Disagreement resolution
-    # Priority: supported > contradicted > not_enough_information
-    priority = {
-        "supported": 2,
-        "contradicted": 1,
-        "not_enough_information": 0,
-    }
-
-    p_priority = priority.get(primary.claim_status, 0)
-    s_priority = priority.get(secondary.claim_status, 0)
-
-    if s_priority > p_priority:
-        # Qwen has higher-priority result — use Qwen's but merge flags
+    # Disagreement: only let the second opinion override when the primary
+    # abstained (not_enough_information) and the secondary is decisive.
+    decisive = {"supported", "contradicted"}
+    if (
+        primary.claim_status == "not_enough_information"
+        and secondary.claim_status in decisive
+    ):
         logger.info(
-            "Ensemble: Qwen (%s) overrides Gemini (%s)",
-            secondary.claim_status, primary.claim_status
+            "Ensemble: Qwen resolves NEI → %s (Gemini was not_enough_information)",
+            secondary.claim_status,
         )
         secondary.risk_flags = _merge_flags(
             primary.risk_flags, secondary.risk_flags, extra=["manual_review_required"]
         )
         return secondary
-    else:
-        # Keep Gemini's result, note disagreement
-        logger.info(
-            "Ensemble: keeping Gemini (%s) over Qwen (%s)",
-            primary.claim_status, secondary.claim_status
-        )
-        primary.risk_flags = _merge_flags(
-            primary.risk_flags, secondary.risk_flags, extra=["manual_review_required"]
-        )
-        return primary
+
+    # Primary was decisive (or secondary is NEI): keep the primary verdict and
+    # surface the disagreement for human review.
+    logger.info(
+        "Ensemble: keeping Gemini (%s) over Qwen (%s) — flagged for review",
+        primary.claim_status, secondary.claim_status,
+    )
+    primary.risk_flags = _merge_flags(
+        primary.risk_flags, secondary.risk_flags, extra=["manual_review_required"]
+    )
+    return primary
 
 
 def _merge_flags(*flag_strings: str, extra: Optional[List[str]] = None) -> str:
