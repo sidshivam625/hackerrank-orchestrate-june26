@@ -1,0 +1,73 @@
+# Environments
+.venv/
+venv/
+env/
+ENV/
+*.venv
+
+# Secrets and credentials
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+service-account*.json
+
+# Python caching & builds
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Testing & Caches
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.hypothesis/
+
+# Generated Pipeline Outputs (avoid committing transient evaluation predictions)
+*sample_predictions.csv
+*sample_output.csv
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

@@ -1,0 +1,297 @@
+"""
+pipeline/escalation_agent.py
+──────────────────────────────
+Layer 4 — Qwen2.5-VL-72B escalation via AIML API.
+
+Triggered when the primary Gemini agent returns:
+- claim_status = "not_enough_information" AND images are valid
+- Contradictory signals between risk_flags and claim_status
+- Multiple images with conflicting evidence
+
+Uses the OpenAI-compatible AIML API endpoint.
+Results are ensemble-voted with the primary result.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import logging
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from openai import AsyncOpenAI
+
+from models.schema import ClaimAnalysisResult
+from pipeline.ingestion import ClaimContext
+
+logger = logging.getLogger(__name__)
+
+
+def _load_prompt(prompt_name: str) -> str:
+    """Load a prompt template from the prompts/ directory."""
+    prompts_dir = Path(__file__).parent.parent / "prompts"
+    path = prompts_dir / prompt_name
+    return path.read_text(encoding="utf-8")
+
+
+def _should_escalate(
+    primary_result: ClaimAnalysisResult,
+    ctx: ClaimContext,
+    enable_escalation: bool = True,
+) -> bool:
+    """
+    Decide if a claim should be escalated to Qwen for second opinion.
+
+    Escalation criteria (any one triggers it):
+    1. claim_status = "not_enough_information" AND at least one valid image
+    2. evidence_standard_met=False but images appear physically valid
+    3. Multiple conflicting risk flags suggesting ambiguity
+    """
+    if not enable_escalation:
+        return False
+
+    # Don't escalate if no valid images (Qwen can't help)
+    if ctx.valid_images_count == 0:
+        return False
+
+    # Escalate uncertain claims with valid images
+    if (
+        primary_result.claim_status == "not_enough_information"
+        and primary_result.valid_image
+    ):
+        return True
+
+    # Escalate if evidence standard not met but images are valid
+    if not primary_result.evidence_standard_met and primary_result.valid_image:
+        return True
+
+    # Escalate on contradicted claims from high-risk users (cross-check)
+    if (
+        primary_result.claim_status == "contradicted"
+        and ctx.user_history
+        and ctx.user_history.rejection_ratio > 0.5
+    ):
+        return True
+
+    return False
+
+
+class QwenEscalationAgent:
+    """
+    Secondary verification agent using Qwen3-VL-32B via AIML API.
+    OpenAI-compatible interface.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.aimlapi.com/v1",
+        model_name: str = "alibaba/qwen3-vl-32b-instruct",
+        max_retries: int = 3,
+    ):
+        self.model_name = model_name
+        self.max_retries = max_retries
+        self._client: Optional[AsyncOpenAI] = None
+        self._system_prompt: str = ""
+        self._escalation_prompt_template: str = ""
+        self._api_key = api_key
+        self._base_url = base_url
+
+    def initialise(self) -> None:
+        """Set up the AIML API client and load prompts."""
+        self._client = AsyncOpenAI(
+            api_key=self._api_key,
+            base_url=self._base_url,
+        )
+        self._system_prompt = _load_prompt("system_prompt.txt")
+        self._escalation_prompt_template = _load_prompt("escalation_prompt.txt")
+        logger.info(
+            "QwenEscalationAgent initialised — model=%s", self.model_name
+        )
+
+    async def analyse_claim_async(
+        self,
+        ctx: ClaimContext,
+        primary_result: ClaimAnalysisResult,
+    ) -> Optional[ClaimAnalysisResult]:
+        """
+        Send claim to Qwen for independent second-opinion analysis.
+        Returns None if escalation fails or is not applicable.
+        """
+        import random
+
+        last_error: Optional[Exception] = None
+
+        for attempt in range(self.max_retries):
+            try:
+                result = await self._call_qwen(ctx, primary_result)
+                logger.info(
+                    "Escalation complete for %s — Qwen result: %s",
+                    ctx.user_id, result.claim_status
+                )
+                return result
+            except Exception as e:
+                last_error = e
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "Escalation attempt %d/%d failed for %s: %s — waiting %.1fs",
+                    attempt + 1, self.max_retries, ctx.user_id, str(e)[:100], wait
+                )
+                await asyncio.sleep(wait)
+
+        logger.error(
+            "All escalation retries failed for %s: %s",
+            ctx.user_id, last_error
+        )
+        return None
+
+    async def _call_qwen(
+        self,
+        ctx: ClaimContext,
+        primary_result: ClaimAnalysisResult,
+    ) -> ClaimAnalysisResult:
+        """Build multimodal message and call Qwen-VL model."""
+        # Build prompt from template
+        prompt = self._escalation_prompt_template.format(
+            user_claim=ctx.user_claim,
+            claim_object=ctx.claim_object,
+            claim_context=f"Object: {ctx.claim_object}, User says: {ctx.user_claim[:200]}",
+            primary_result=primary_result.claim_status,
+            primary_flags=primary_result.risk_flags,
+            evidence_requirement="\n".join(
+                f"- {r.applies_to}: {r.minimum_image_evidence}"
+                for r in ctx.applicable_requirements
+            ),
+        )
+
+        # Build message content with images
+        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+
+        for img_path in ctx.image_path_list:
+            try:
+                with open(img_path, "rb") as f:
+                    img_data = base64.standard_b64encode(f.read()).decode("utf-8")
+
+                suffix = Path(img_path).suffix.lower()
+                mime = "image/jpeg" if suffix in (".jpg", ".jpeg") else "image/png"
+
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime};base64,{img_data}",
+                        "detail": "high"
+                    }
+                })
+            except Exception as e:
+                logger.warning("Could not encode image %s: %s", img_path, e)
+
+        messages = [
+            {"role": "system", "content": self._system_prompt},
+            {"role": "user", "content": content},
+        ]
+
+        response = await self._client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
+            max_tokens=8192,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+
+        raw_text = response.choices[0].message.content.strip()
+        logger.debug("Qwen raw response for %s: %s", ctx.user_id, raw_text[:200])
+
+        data = self._parse_json(raw_text)
+
+        # Remove escalation-specific fields before Pydantic validation
+        data.pop("escalation_confidence", None)
+        data.pop("escalation_notes", None)
+
+        return ClaimAnalysisResult(**data)
+
+    @staticmethod
+    def _parse_json(raw: str) -> Dict[str, Any]:
+        """Parse JSON from Qwen response."""
+        clean = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("```").strip()
+        try:
+            return json.loads(clean)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", clean, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            raise ValueError(f"Cannot parse Qwen JSON: {clean[:200]}")
+
+
+def ensemble_vote(
+    primary: ClaimAnalysisResult,
+    secondary: Optional[ClaimAnalysisResult],
+) -> ClaimAnalysisResult:
+    """
+    Combine primary (Gemini) and secondary (Qwen) results.
+
+    Voting logic:
+    - If both agree on claim_status → use that result, merge flags
+    - If they disagree → prefer the one with more specific evidence
+      (supported > contradicted > not_enough_information)
+    - Merge risk_flags from both
+    """
+    if secondary is None:
+        return primary
+
+    # Both agree
+    if primary.claim_status == secondary.claim_status:
+        logger.info(
+            "Ensemble: both models agree — %s", primary.claim_status
+        )
+        merged = _merge_flags(primary.risk_flags, secondary.risk_flags)
+        primary.risk_flags = merged
+        return primary
+
+    # Disagreement resolution
+    # Priority: supported > contradicted > not_enough_information
+    priority = {
+        "supported": 2,
+        "contradicted": 1,
+        "not_enough_information": 0,
+    }
+
+    p_priority = priority.get(primary.claim_status, 0)
+    s_priority = priority.get(secondary.claim_status, 0)
+
+    if s_priority > p_priority:
+        # Qwen has higher-priority result — use Qwen's but merge flags
+        logger.info(
+            "Ensemble: Qwen (%s) overrides Gemini (%s)",
+            secondary.claim_status, primary.claim_status
+        )
+        secondary.risk_flags = _merge_flags(
+            primary.risk_flags, secondary.risk_flags, ["manual_review_required"]
+        )
+        return secondary
+    else:
+        # Keep Gemini's result, note disagreement
+        logger.info(
+            "Ensemble: keeping Gemini (%s) over Qwen (%s)",
+            primary.claim_status, secondary.claim_status
+        )
+        primary.risk_flags = _merge_flags(
+            primary.risk_flags, secondary.risk_flags, ["manual_review_required"]
+        )
+        return primary
+
+
+def _merge_flags(*flag_strings: str, extra: Optional[List[str]] = None) -> str:
+    """Merge multiple semicolon-separated flag strings."""
+    all_flags: set = set()
+    for fs in flag_strings:
+        for f in fs.split(";"):
+            f = f.strip()
+            if f and f != "none":
+                all_flags.add(f)
+    if extra:
+        all_flags.update(extra)
+
+    return ";".join(sorted(all_flags)) if all_flags else "none"
