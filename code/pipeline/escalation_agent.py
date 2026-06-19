@@ -197,7 +197,7 @@ class QwenEscalationAgent:
             model=self.model_name,
             messages=messages,
             max_tokens=8192,
-            temperature=0.3,
+            temperature=0.1,
             response_format={"type": "json_object"},
         )
 
@@ -209,6 +209,7 @@ class QwenEscalationAgent:
         # Remove escalation-specific fields before Pydantic validation
         data.pop("escalation_confidence", None)
         data.pop("escalation_notes", None)
+        data.pop("image_analysis", None)
 
         return ClaimAnalysisResult(**data)
 
@@ -216,6 +217,10 @@ class QwenEscalationAgent:
     def _parse_json(raw: str) -> Dict[str, Any]:
         """Parse JSON from Qwen response."""
         clean = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("```").strip()
+        if not clean.startswith("{"):
+            clean = "{" + clean
+        if not clean.endswith("}"):
+            clean = clean + "}"
         try:
             return json.loads(clean)
         except json.JSONDecodeError:
@@ -268,7 +273,7 @@ def ensemble_vote(
             secondary.claim_status, primary.claim_status
         )
         secondary.risk_flags = _merge_flags(
-            primary.risk_flags, secondary.risk_flags, ["manual_review_required"]
+            primary.risk_flags, secondary.risk_flags, extra=["manual_review_required"]
         )
         return secondary
     else:
@@ -278,7 +283,7 @@ def ensemble_vote(
             primary.claim_status, secondary.claim_status
         )
         primary.risk_flags = _merge_flags(
-            primary.risk_flags, secondary.risk_flags, ["manual_review_required"]
+            primary.risk_flags, secondary.risk_flags, extra=["manual_review_required"]
         )
         return primary
 

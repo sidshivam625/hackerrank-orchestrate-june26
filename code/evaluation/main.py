@@ -124,6 +124,26 @@ class EvaluationMetrics:
             "weighted_f1": f1_score(gold, pred, average="weighted", labels=labels, zero_division=0),
         }
 
+    def multi_label_field_metrics(self, field: str) -> Dict[str, float]:
+        """Multi-label accuracy (exact match) and F1 for fields like risk_flags."""
+        gold_lists = [set(str(g).lower().split(";")) - {"none", ""} for g in self.gold[field]]
+        pred_lists = [set(str(p).lower().split(";")) - {"none", ""} for p in self.pred[field]]
+        
+        mlb = MultiLabelBinarizer()
+        mlb.fit(gold_lists + pred_lists)
+        
+        if len(mlb.classes_) == 0:
+            return {"accuracy": 1.0, "macro_f1": 1.0, "micro_f1": 1.0}
+            
+        gold_bin = mlb.transform(gold_lists)
+        pred_bin = mlb.transform(pred_lists)
+        
+        return {
+            "accuracy": accuracy_score(gold_bin, pred_bin),
+            "macro_f1": f1_score(gold_bin, pred_bin, average="macro", zero_division=0),
+            "micro_f1": f1_score(gold_bin, pred_bin, average="micro", zero_division=0)
+        }
+
     def risk_flags_jaccard(self) -> float:
         """
         Multi-label Jaccard similarity for risk_flags.
@@ -216,6 +236,8 @@ def generate_report(
     evidence_m = metrics.boolean_field_metrics("evidence_standard_met")
     valid_img_m = metrics.boolean_field_metrics("valid_image")
     jaccard = metrics.risk_flags_jaccard()
+    risk_m = metrics.multi_label_field_metrics("risk_flags")
+    image_ids_m = metrics.multi_label_field_metrics("supporting_image_ids")
     sev_mae = metrics.severity_mae()
     failures = metrics.failure_analysis(n=5)
 
@@ -284,12 +306,17 @@ def generate_report(
 | `object_part`           | Accuracy       | {part_m['accuracy']:.3f}  |
 | `object_part`           | Weighted F1    | {part_m['weighted_f1']:.3f}  |
 | `severity`              | Accuracy       | {severity_m['accuracy']:.3f}  |
+| `severity`              | Weighted F1    | {severity_m['weighted_f1']:.3f}  |
 | `severity`              | Ordinal MAE    | {sev_mae:.3f}  |
 | `evidence_standard_met` | Accuracy       | {evidence_m['accuracy']:.3f}  |
 | `evidence_standard_met` | F1             | {evidence_m['f1']:.3f}  |
 | `valid_image`           | Accuracy       | {valid_img_m['accuracy']:.3f}  |
 | `valid_image`           | F1             | {valid_img_m['f1']:.3f}  |
+| `risk_flags`            | Exact Accuracy | {risk_m['accuracy']:.3f}  |
+| `risk_flags`            | Macro F1       | {risk_m['macro_f1']:.3f}  |
 | `risk_flags`            | Jaccard (avg)  | {jaccard:.3f}  |
+| `supporting_image_ids`  | Exact Accuracy | {image_ids_m['accuracy']:.3f}  |
+| `supporting_image_ids`  | Macro F1       | {image_ids_m['macro_f1']:.3f}  |
 
 ---
 
@@ -415,6 +442,10 @@ claims.csv ──► Layer 1: DataIngestionEngine ◄── user_history.csv + e
     print(f"claim_status macro F1  : {status_m['macro_f1']:.3f}")
     print(f"issue_type accuracy    : {issue_m['accuracy']:.3f}")
     print(f"object_part accuracy   : {part_m['accuracy']:.3f}")
+    print(f"severity accuracy      : {severity_m['accuracy']:.3f}")
+    print(f"severity weighted F1   : {severity_m['weighted_f1']:.3f}")
+    print(f"risk_flags accuracy    : {risk_m['accuracy']:.3f}")
+    print(f"risk_flags macro F1    : {risk_m['macro_f1']:.3f}")
     print(f"risk_flags Jaccard     : {jaccard:.3f}")
     print(f"severity MAE           : {sev_mae:.3f}")
     print(f"evidence_standard_met  : {evidence_m['accuracy']:.3f} accuracy")

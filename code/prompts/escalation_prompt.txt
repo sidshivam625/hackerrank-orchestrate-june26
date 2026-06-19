@@ -20,18 +20,19 @@ Pay particular attention to:
 - Evidence requirement: {evidence_requirement}
 
 ## ANALYSIS STEPS
-For each image, describe:
+Analyze each image internally:
 1. What is clearly visible
 2. What damage (if any) is present
 3. Whether this matches the claim
 4. Your confidence level (high/medium/low) and why
 
-Then produce your final JSON verdict.
+Produce ONLY your final JSON verdict. Do not output any markdown formatting or explanations outside the JSON object.
 
 ## OUTPUT FORMAT
 Produce a valid JSON object with these exact fields:
 
-{
+{{
+  "image_analysis": "detailed string explaining what is visible in each image, what damage is present, and why you agree/disagree",
   "evidence_standard_met": boolean,
   "evidence_standard_met_reason": "string",
   "risk_flags": "semicolon-separated string or none",
@@ -44,7 +45,7 @@ Produce a valid JSON object with these exact fields:
   "severity": "one of: none | low | medium | high | unknown",
   "escalation_confidence": "high | medium | low",
   "escalation_notes": "brief notes on what the primary system may have missed or why you agree/disagree"
-}
+}}
 
 Allowed risk_flags: blurry_image | cropped_or_obstructed | low_light_or_glare | wrong_angle | wrong_object | wrong_object_part | damage_not_visible | claim_mismatch | possible_manipulation | non_original_image | text_instruction_present | user_history_risk | manual_review_required
 

@@ -151,7 +151,7 @@ def test_aiml_api():
                 {"role": "user", "content": "Respond with exactly the word: SUCCESS"}
             ],
             max_tokens=10,
-            temperature=0.3
+            temperature=0.1
         )
         
         output = chat_completion.choices[0].message.content.strip()

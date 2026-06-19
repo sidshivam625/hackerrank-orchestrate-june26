@@ -319,7 +319,7 @@ class GeminiVLMAgent:
             generation_config = {
                 "response_mime_type": "application/json",
                 "response_schema": GEMINI_RESPONSE_SCHEMA,
-                "temperature": 0.3,
+                "temperature": 0.1,
                 "max_output_tokens": 8192,
             }
         else:
@@ -333,12 +333,11 @@ class GeminiVLMAgent:
                 except Exception as e:
                     logger.warning("Could not load image %s: %s", img_path, e)
 
-            # Call Gemini with schema-constrained JSON output
             generation_config = genai.GenerationConfig(
                 response_mime_type="application/json",
                 response_schema=GEMINI_RESPONSE_SCHEMA,
-                temperature=0.3,   # Low temperature for determinism
-                max_output_tokens=1024,
+                temperature=0.1,   # Low temperature for determinism
+                max_output_tokens=4096,
             )
 
         response = self._model.generate_content(

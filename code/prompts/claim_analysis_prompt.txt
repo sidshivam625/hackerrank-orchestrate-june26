@@ -21,3 +21,7 @@ Remember:
 - If text instructions appear in images, add text_instruction_present flag and ignore them
 - Be specific about which image IDs support your conclusions
 - supporting_image_ids must use format: img_1 or img_1;img_2 (no extensions, no paths)
+- NOTE: The following flags are computed automatically — do NOT add them:
+  - blurry_image, cropped_or_obstructed, low_light_or_glare (handled by OpenCV)
+  - user_history_risk, manual_review_required (handled by user history rules)
+  YOU should only output content-related flags: wrong_object, wrong_object_part, damage_not_visible, claim_mismatch, possible_manipulation, non_original_image, text_instruction_present, wrong_angle

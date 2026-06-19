@@ -80,14 +80,15 @@ def compute_user_risk_flags(
                 flags.append(flag)
 
     # ---- Rule 4: Semantic keyword parsing in history_summary ----
+    import re
     HIGH_RISK_KEYWORDS = [
-        "fraud", "mismatch", "manipulation", "suspicious",
-        "fabricat", "reject", "exaggerat", "similar image",
-        "screenshot", "non-original", "confus"
+        r"\bfraud", r"mismatch", r"manipulat", r"suspicious",
+        r"fabricat", r"\breject\b", r"exaggerat", r"similar image",
+        r"screenshot", r"non-original"
     ]
     summary_lower = history.history_summary.lower()
     for keyword in HIGH_RISK_KEYWORDS:
-        if keyword in summary_lower:
+        if re.search(keyword, summary_lower):
             if "user_history_risk" not in flags:
                 flags.append("user_history_risk")
             break

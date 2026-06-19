@@ -68,7 +68,7 @@ class ImageValidator:
 
     def __init__(
         self,
-        blur_threshold: float = 80.0,
+        blur_threshold: float = 45.0,
         brightness_min: float = 50.0,
         brightness_max: float = 210.0,
         entropy_threshold: float = 3.0,
@@ -144,7 +144,7 @@ class ImageValidator:
             if "cropped_or_obstructed" not in flags:
                 flags.append("cropped_or_obstructed")
 
-        return ImageQualityResult(
+        result = ImageQualityResult(
             path=path,
             valid=is_valid,
             flags=flags if flags else [],
@@ -154,6 +154,9 @@ class ImageValidator:
             width=w,
             height=h,
         )
+        
+        IMAGE_CACHE.put(image_path, result)
+        return result
 
     def validate_image_set(
         self, image_paths: List[str]
