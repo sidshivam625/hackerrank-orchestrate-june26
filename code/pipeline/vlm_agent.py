@@ -1,3 +1,4 @@
+
 """
 pipeline/vlm_agent.py
 ──────────────────────
@@ -421,12 +422,20 @@ class GeminiVLMAgent:
             ";".join(quality_flags) if quality_flags else "none"
         )
 
+        # Input hardening: cap the conversation length fed to the model so an
+        # adversarially huge user_claim can't blow the token budget / cost.
+        # Only the prompt copy is truncated — the OUTPUT user_claim is untouched.
+        MAX_CLAIM_CHARS = 6000
+        safe_user_claim = ctx.user_claim
+        if len(safe_user_claim) > MAX_CLAIM_CHARS:
+            safe_user_claim = safe_user_claim[:MAX_CLAIM_CHARS] + " …[truncated]"
+
         # Load template and substitute
         template = self._claim_analysis_prompt_template
         prompt = template.format(
             user_id=ctx.user_id,
             claim_object=ctx.claim_object,
-            user_claim=ctx.user_claim,
+            user_claim=safe_user_claim,
             image_quality_flags=quality_str,
             user_history_flags=";".join(
                 [f for f in risk_flags] if risk_flags else ["none"]
@@ -562,6 +571,13 @@ class GeminiVLMAgent:
         base.evidence_standard_met = modal("evidence_standard_met")
         base.claim_status_justification = modal("claim_status_justification")
         base.supporting_image_ids = modal("supporting_image_ids")
+
+        # Keep the fullest image-text transcription across samples (so injection /
+        # non-original detection isn't dropped by a sample that missed the text).
+        texts = [getattr(r, "detected_image_text", "") or "" for r in results]
+        non_empty = [t for t in texts if t.strip() and t.strip().lower() != "none"]
+        if non_empty:
+            base.detected_image_text = max(non_empty, key=len)
 
         threshold = (k // 2) + 1
         flag_counts: Dict[str, int] = {}

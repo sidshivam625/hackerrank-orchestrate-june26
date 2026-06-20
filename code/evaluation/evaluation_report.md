@@ -15,23 +15,23 @@
 
 ## 2. Primary Metric — `claim_status` Performance
 
-**Overall Accuracy: 0.850 | Macro F1: 0.815**
+**Overall Accuracy: 0.850 | Macro F1: 0.813**
 
 ### Per-Class Breakdown
 
 | Class                     | Precision | Recall | F1    | Support |
 |---------------------------|-----------|--------|-------|---------|
-| supported                 | 0.917     | 0.917  | 0.917 | 12       |
-| contradicted              | 0.667     | 0.800  | 0.727 | 5       |
+| supported                 | 0.800     | 1.000  | 0.889 | 12       |
+| contradicted              | 1.000     | 0.600  | 0.750 | 5       |
 | not_enough_information    | 1.000     | 0.667  | 0.800 | 3       |
 
 ### Confusion Matrix
 
 ```
 Predicted →     supported     contradict    not_enough  
-Actual supported   : 11            1             0           
-Actual contradict  : 1             4             0           
-Actual not_enough  : 0             1             2           
+Actual supported   : 12            0             0           
+Actual contradict  : 2             3             0           
+Actual not_enough  : 1             0             2           
 ```
 
 ---
@@ -40,22 +40,22 @@ Actual not_enough  : 0             1             2
 
 | Field                   | Metric         | Score    |
 |-------------------------|----------------|----------|
-| `issue_type`            | Accuracy       | 0.750  |
-| `issue_type`            | Weighted F1    | 0.732  |
-| `object_part`           | Accuracy       | 0.850  |
-| `object_part`           | Weighted F1    | 0.867  |
-| `severity`              | Accuracy       | 0.800  |
-| `severity`              | Weighted F1    | 0.815  |
-| `severity`              | Ordinal MAE    | 0.235  |
+| `issue_type`            | Accuracy       | 0.800  |
+| `issue_type`            | Weighted F1    | 0.782  |
+| `object_part`           | Accuracy       | 0.900  |
+| `object_part`           | Weighted F1    | 0.917  |
+| `severity`              | Accuracy       | 0.750  |
+| `severity`              | Weighted F1    | 0.760  |
+| `severity`              | Ordinal MAE    | 0.294  |
 | `evidence_standard_met` | Accuracy       | 0.950  |
 | `evidence_standard_met` | F1             | 0.971  |
 | `valid_image`           | Accuracy       | 0.900  |
-| `valid_image`           | F1             | 0.944  |
-| `risk_flags`            | Exact Accuracy | 0.500  |
-| `risk_flags`            | Macro F1       | 0.652  |
-| `risk_flags`            | Jaccard (avg)  | 0.739  |
+| `valid_image`           | F1             | 0.941  |
+| `risk_flags`            | Exact Accuracy | 0.550  |
+| `risk_flags`            | Macro F1       | 0.668  |
+| `risk_flags`            | Jaccard (avg)  | 0.731  |
 | `supporting_image_ids`  | Exact Accuracy | 0.800  |
-| `supporting_image_ids`  | Macro F1       | 0.782  |
+| `supporting_image_ids`  | Macro F1       | 0.770  |
 
 ---
 
@@ -67,27 +67,27 @@ The following claims had the most prediction errors:
 ### Case 1: user_034 (package)
 - **Claim snippet**: Customer: My delivery box arrived opened. | Support: Was the package crushed or …
 - **Errors**: claim_status: expected=contradicted, got=supported; issue_type: expected=none, got=torn_packaging
-- **Predicted justification**: Image img_1 clearly shows a broken security seal and torn cardboard, which supports the user's claim of a torn-open package. However, img_1 contains a
+- **Predicted justification**: img_1 provides clear evidence of a torn seal and damaged cardboard, supporting the user's claim of a torn-open package. The contradictory evidence in 
 
-### Case 2: user_001 (car)
-- **Claim snippet**: Customer: Hi, I found new damage on my car after it was parked outside overnight…
-- **Errors**: claim_status: expected=supported, got=contradicted; issue_type: expected=dent, got=broken_part
-- **Predicted justification**: The user claimed a 'dent' on the rear bumper, but img_1 shows catastrophic rear-end damage with the bumper missing and the trunk crushed. The severity
-
-### Case 3: user_033 (package)
-- **Claim snippet**: Customer: The shipping box arrived in bad condition. | Support: What kind of con…
-- **Errors**: issue_type: expected=unknown, got=none; object_part: expected=unknown, got=box
-- **Predicted justification**: The user's claim is for a crushed 'outside box', but the provided image img_1 shows a dented food can, which is an item from inside the package, not t
-
-### Case 4: user_002 (car)
-- **Claim snippet**: Customer: Parking lot mein meri car ko scrape lag gaya. | Support: Aap kis type …
-- **Errors**: claim_status: expected=not_enough_information, got=contradicted
-- **Predicted justification**: The user claimed a 'scratch' on the front bumper. However, img_1 shows a different car with a severely broken and crushed bumper, while img_2 shows a 
-
-### Case 5: user_008 (car)
+### Case 2: user_008 (car)
 - **Claim snippet**: Customer: I picked up my car after service and noticed a mark on the hood. | Sup…
-- **Errors**: object_part: expected=front_bumper, got=hood
-- **Predicted justification**: The user claimed a minor scratch on the hood, but img_1 shows a completely wrecked car with catastrophic damage to the entire front end. The image als
+- **Errors**: claim_status: expected=contradicted, got=supported; object_part: expected=front_bumper, got=hood
+- **Predicted justification**: The user claimed a scratch on the hood. The provided image shows the car's hood is severely damaged as part of a major front-end collision. Although t
+
+### Case 3: user_002 (car)
+- **Claim snippet**: Customer: Parking lot mein meri car ko scrape lag gaya. | Support: Aap kis type …
+- **Errors**: claim_status: expected=not_enough_information, got=supported
+- **Predicted justification**: The user claimed a scratch on the front bumper. While img_1 shows damage far more severe than a scratch (a crushed and broken bumper), the claim is su
+
+### Case 4: user_007 (car)
+- **Claim snippet**: Customer: Someone clipped my car while it was parked. | Support: What part was h…
+- **Errors**: issue_type: expected=broken_part, got=crack
+- **Predicted justification**: The user claimed the side mirror was damaged, and img_1 clearly shows the mirror glass is cracked, which supports the claim.
+
+### Case 5: user_001 (car)
+- **Claim snippet**: Customer: Hi, I found new damage on my car after it was parked outside overnight…
+- **Errors**: issue_type: expected=dent, got=broken_part
+- **Predicted justification**: The user claimed a dent in the rear bumper area. img_1 shows this area has sustained severe damage, including a missing bumper cover and a crushed tru
 
 
 ---

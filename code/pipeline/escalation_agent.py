@@ -280,6 +280,10 @@ def ensemble_vote(
         secondary.risk_flags = _merge_flags(
             primary.risk_flags, secondary.risk_flags, extra=["manual_review_required"]
         )
+        # Preserve the primary's image-text transcription (Qwen doesn't produce it),
+        # so deterministic injection / non-original detection survives escalation.
+        if not getattr(secondary, "detected_image_text", "") and getattr(primary, "detected_image_text", ""):
+            secondary.detected_image_text = primary.detected_image_text
         return secondary
 
     # Primary was decisive (or secondary is NEI): keep the primary verdict and
