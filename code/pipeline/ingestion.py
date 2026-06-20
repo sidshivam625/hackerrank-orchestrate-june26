@@ -104,6 +104,10 @@ class DataIngestionEngine:
 
     def load_all(self) -> None:
         """Load all CSVs from dataset_dir."""
+        # Resolve to absolute path here so all derived image paths are absolute.
+        # main.py may assign a relative Path (e.g. "../dataset") after __init__;
+        # resolving at load time is the single safe moment to fix that.
+        self.dataset_dir = self.dataset_dir.resolve()
         self._load_claims()
         self._load_user_history()
         self._load_evidence_requirements()
@@ -116,6 +120,7 @@ class DataIngestionEngine:
 
     def load_sample(self) -> None:
         """Load sample_claims.csv (input + expected output columns)."""
+        self.dataset_dir = self.dataset_dir.resolve()  # same reason as load_all()
         path = self.dataset_dir / "sample_claims.csv"
         self._claims_df = pd.read_csv(path, dtype=str).fillna("")
         self._load_user_history()

@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -172,11 +173,28 @@ class QwenEscalationAgent:
 
         for img_path in ctx.image_path_list:
             try:
-                with open(img_path, "rb") as f:
-                    img_data = base64.standard_b64encode(f.read()).decode("utf-8")
-
-                suffix = Path(img_path).suffix.lower()
-                mime = "image/jpeg" if suffix in (".jpg", ".jpeg") else "image/png"
+                # Normalize and resize for Qwen via PIL.
+                # (1) Handles CMYK / progressive / palette JPEGs that Qwen rejects.
+                # (2) Resizes to MAX_DIM on the longest side — AIML API enforces a
+                #     per-image file-size limit; high-res phone photos can exceed it.
+                import io
+                from PIL import Image as _PILImage
+                MAX_DIM = int(os.environ.get("QWEN_MAX_IMAGE_DIM", "1568"))
+                JPEG_QUALITY = int(os.environ.get("QWEN_JPEG_QUALITY", "85"))
+                with _PILImage.open(img_path) as pil_img:
+                    if pil_img.mode not in ("RGB",):
+                        pil_img = pil_img.convert("RGB")
+                    w, h = pil_img.size
+                    if max(w, h) > MAX_DIM:
+                        scale = MAX_DIM / max(w, h)
+                        pil_img = pil_img.resize(
+                            (int(w * scale), int(h * scale)),
+                            _PILImage.LANCZOS,
+                        )
+                    buf = io.BytesIO()
+                    pil_img.save(buf, format="JPEG", quality=JPEG_QUALITY)
+                img_data = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
+                mime = "image/jpeg"
 
                 # Anchor each image to its image_id so supporting_image_ids is
                 # grounded correctly on multi-image claims.
@@ -190,7 +208,7 @@ class QwenEscalationAgent:
                     }
                 })
             except Exception as e:
-                logger.warning("Could not encode image %s: %s", img_path, e)
+                logger.warning("Could not encode image %s for Qwen: %s", img_path, e)
 
         messages = [
             {"role": "system", "content": self._system_prompt},

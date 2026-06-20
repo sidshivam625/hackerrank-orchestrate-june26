@@ -97,8 +97,38 @@ class ImageValidator:
 
         path = str(image_path)
 
-        # Load image
+        # Load image — three-tier fallback for maximum format coverage.
+        #
+        # Tier 1: cv2.imread() — fast, but silently returns None for:
+        #   - Paths with spaces on Windows (known OpenCV/Windows bug)
+        #   - WebP, AVIF, HEIC, and some CMYK JPEG variants
+        # Tier 2: numpy.fromfile + cv2.imdecode — bypasses the Windows path
+        #   encoding issue (reads bytes via Python, decodes via OpenCV).
+        # Tier 3: PIL → PNG bytes → cv2.imdecode — handles every format PIL
+        #   supports (WebP, TIFF, BMP, palette PNG, etc.) by re-encoding to
+        #   PNG first, which OpenCV can always decode.
         img = cv2.imread(path)
+        if img is None:
+            try:
+                img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+            except Exception:
+                pass
+        if img is None:
+            try:
+                import io
+                from PIL import Image as _PILImage
+                with _PILImage.open(path) as pil_img:
+                    if pil_img.mode not in ("RGB", "RGBA"):
+                        pil_img = pil_img.convert("RGB")
+                    buf = io.BytesIO()
+                    pil_img.save(buf, format="PNG")
+                img = cv2.imdecode(
+                    np.frombuffer(buf.getvalue(), dtype=np.uint8), cv2.IMREAD_COLOR
+                )
+                if img is not None:
+                    logger.debug("Loaded %s via PIL fallback", Path(path).name)
+            except Exception as pil_err:
+                logger.debug("PIL fallback failed for %s: %s", path, pil_err)
         if img is None:
             logger.warning("Could not load image: %s", path)
             return ImageQualityResult(
