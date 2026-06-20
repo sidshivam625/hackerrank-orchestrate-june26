@@ -1,0 +1,1046 @@
+Data ingestion is much more than just reading CSVs. It is creating a **fully enriched ClaimContext object** that every downstream layer uses. Think of it as the pipeline's "feature engineering + joining" stage. 
+
+# High-Level Flow
+
+```text
+claims.csv
+user_history.csv
+evidence_requirements.csv
+        ↓
+Load
+        ↓
+Join
+        ↓
+Parse images
+        ↓
+Resolve paths
+        ↓
+Attach user history
+        ↓
+Attach evidence rules
+        ↓
+Create ClaimContext
+```
+
+This ClaimContext is then passed to:
+
+```text
+Layer 2 → OpenCV Validator
+Layer 3 → Gemini
+Layer 4 → Qwen Escalation
+Layer 5 → Post Processor
+```
+
+---
+
+# Step 1: Load claims.csv
+
+The ingestion engine first loads:
+
+```python
+_load_claims()
+```
+
+which reads:
+
+```python
+claims.csv
+```
+
+using:
+
+```python
+pd.read_csv(...).fillna("")
+```
+
+Every claim row contains things like:
+
+```text
+user_id
+image_paths
+user_claim
+claim_object
+```
+
+Example:
+
+```csv
+user_id,image_paths,user_claim,claim_object
+u001,images/case1/img1.jpg;images/case1/img2.jpg,"My windshield is cracked",car
+```
+
+This becomes the base record. 
+
+---
+
+# Step 2: Load user_history.csv
+
+Then:
+
+```python
+_load_user_history()
+```
+
+loads historical fraud/risk information.
+
+Each row becomes a:
+
+```python
+UserHistory
+```
+
+object.
+
+Example:
+
+```csv
+user_id,past_claim_count,rejected_claim
+u001,10,7
+```
+
+becomes:
+
+```python
+UserHistory(
+    user_id="u001",
+    past_claim_count=10,
+    rejected_claim=7
+)
+```
+
+---
+
+## Derived Feature: Rejection Ratio
+
+A useful feature is computed:
+
+```python
+@property
+def rejection_ratio(self):
+```
+
+Formula:
+
+[
+\text{rejection_ratio}
+======================
+
+\frac{\text{rejected_claim}}
+{\text{past_claim_count}}
+]
+
+Example:
+
+```text
+10 total claims
+7 rejected
+```
+
+Result:
+
+```text
+0.7
+```
+
+This is later used by the escalation agent:
+
+```python
+if rejection_ratio > 0.5:
+    escalate
+```
+
+So ingestion is already creating features for later risk analysis. 
+
+---
+
+# Step 3: Load evidence_requirements.csv
+
+Next:
+
+```python
+_load_evidence_requirements()
+```
+
+loads evidence rules.
+
+Example:
+
+```csv
+requirement_id,claim_object,applies_to,minimum_image_evidence
+REQ_001,car,windshield crack,"Need at least one close-up image"
+```
+
+becomes:
+
+```python
+EvidenceRequirement(...)
+```
+
+objects.
+
+These are later inserted into Gemini and Qwen prompts.
+
+Example prompt section:
+
+```text
+Evidence Requirements:
+
+- windshield crack:
+  Need at least one close-up image
+```
+
+This grounds the model. 
+
+---
+
+# Step 4: Build Context For Each Claim
+
+The most important function is:
+
+```python
+_build_context()
+```
+
+For every claim row.
+
+---
+
+## Extract Core Fields
+
+Reads:
+
+```python
+user_id
+image_paths
+user_claim
+claim_object
+```
+
+Example:
+
+```python
+user_id = "u001"
+claim_object = "car"
+user_claim = "Windshield cracked"
+```
+
+---
+
+# Step 5: Parse Multi-Image Claims
+
+Input:
+
+```text
+img1.jpg;img2.jpg;img3.jpg
+```
+
+gets split:
+
+```python
+raw_paths = [...]
+```
+
+Result:
+
+```python
+[
+  "img1.jpg",
+  "img2.jpg",
+  "img3.jpg"
+]
+```
+
+This allows:
+
+```text
+single image claims
+multi image claims
+```
+
+to be processed uniformly.
+
+---
+
+# Step 6: Resolve Absolute Paths
+
+One of the most useful ingestion steps.
+
+Suppose CSV contains:
+
+```text
+images/test/case001/img_1.jpg
+```
+
+The pipeline converts it into:
+
+```text
+/home/project/dataset/images/test/case001/img_1.jpg
+```
+
+using:
+
+```python
+candidate = self.dataset_dir / rp
+```
+
+---
+
+## Fallback Resolution
+
+If first path fails:
+
+```python
+candidate.exists() == False
+```
+
+it tries:
+
+```python
+dataset_dir.parent / rp
+```
+
+This is a recovery mechanism.
+
+Example:
+
+```text
+dataset/
+claims.csv
+
+images/
+img1.jpg
+```
+
+instead of:
+
+```text
+dataset/images/
+```
+
+The fallback prevents crashes. 
+
+---
+
+# Step 7: Missing Image Detection
+
+If image cannot be found:
+
+```python
+logger.warning(...)
+```
+
+logs:
+
+```text
+Image not found
+```
+
+but does NOT crash.
+
+Instead:
+
+```python
+abs_paths.append(str(candidate))
+```
+
+keeps the path.
+
+This is useful because later layers can produce:
+
+```text
+missing image
+no evidence
+```
+
+instead of killing the pipeline.
+
+---
+
+# Step 8: Generate Image IDs
+
+This is a surprisingly important enrichment.
+
+From:
+
+```text
+images/case1/img_1.jpg
+```
+
+they derive:
+
+```python
+img_1
+```
+
+using:
+
+```python
+Path(p).stem
+```
+
+Result:
+
+```python
+image_ids = [
+    "img_1",
+    "img_2"
+]
+```
+
+These IDs later become:
+
+```json
+{
+  "supporting_image_ids":
+  "img_1"
+}
+```
+
+Without ingestion creating IDs, image attribution would be difficult. 
+
+---
+
+# Step 9: Join User History
+
+Now they perform a lookup:
+
+```python
+user_history =
+self._history_map.get(user_id)
+```
+
+Example:
+
+```python
+u001
+```
+
+retrieves:
+
+```python
+UserHistory(
+   rejection_ratio=0.7
+)
+```
+
+and attaches it to the claim.
+
+Result:
+
+```python
+ctx.user_history
+```
+
+is immediately available to all later layers.
+
+---
+
+# Step 10: Missing History Handling
+
+If no history exists:
+
+```python
+if user_history is None:
+```
+
+they create:
+
+```python
+UserHistory(user_id=user_id)
+```
+
+with default values.
+
+Example:
+
+```python
+past_claim_count = 0
+rejected_claim = 0
+```
+
+This avoids:
+
+```python
+NoneType errors
+```
+
+throughout the pipeline.
+
+---
+
+# Step 11: Attach Evidence Requirements
+
+Next:
+
+```python
+_get_applicable_requirements()
+```
+
+selects only relevant rules.
+
+Example:
+
+Claim:
+
+```python
+claim_object = "car"
+```
+
+Then:
+
+```python
+car rules
++
+all rules
+```
+
+are attached.
+
+Laptop rules are ignored.
+
+---
+
+Example:
+
+```text
+REQ_1 -> car
+REQ_2 -> laptop
+REQ_3 -> all
+```
+
+Car claim receives:
+
+```text
+REQ_1
+REQ_3
+```
+
+only. 
+
+---
+
+# Step 12: Construct ClaimContext
+
+Finally everything is assembled.
+
+```python
+ClaimContext(...)
+```
+
+contains:
+
+### Raw Data
+
+```python
+user_id
+user_claim
+claim_object
+```
+
+### Image Information
+
+```python
+image_path_list
+image_ids
+```
+
+### User Intelligence
+
+```python
+user_history
+```
+
+### Evidence Rules
+
+```python
+applicable_requirements
+```
+
+### Future Fields
+
+Placeholders for later layers:
+
+```python
+computed_risk_flags
+image_quality_flags
+valid_images_count
+```
+
+These start empty and get filled later by:
+
+```text
+Layer 2 (OpenCV)
+Layer 3 (Gemini)
+```
+
+---
+
+# What Data Ingestion Is Really Doing
+
+Conceptually it's performing **four different jobs**:
+
+| Job             | What it does                                        |
+| --------------- | --------------------------------------------------- |
+| Data Loading    | Reads claims, history, evidence CSVs                |
+| Data Joining    | Connects claim ↔ user history ↔ evidence rules      |
+| Data Enrichment | Generates image IDs, rejection ratios, requirements |
+| Data Validation | Resolves paths, handles missing history/images      |
+
+So the output is not merely a CSV row. It becomes a rich object:
+
+```python
+ClaimContext
+```
+
+that already contains:
+
+```text
+Claim information
++
+Image metadata
++
+User risk history
++
+Evidence requirements
++
+Future quality/risk placeholders
+```
+
+before a single image has even been analyzed. 
+
+From the code you've shown so far (ingestion, escalation, post-processing), multi-image claims are treated as **a single claim with multiple evidence sources**, not as separate claims. The entire pipeline is designed around that idea.
+
+---
+
+# 1. Ingestion Stage
+
+Suppose a row contains:
+
+```csv
+image_paths
+images/case_001/img_1.jpg;images/case_001/img_2.jpg;images/case_001/img_3.jpg
+```
+
+During `_build_context()`:
+
+```python
+raw_paths = [
+    "images/case_001/img_1.jpg",
+    "images/case_001/img_2.jpg",
+    "images/case_001/img_3.jpg"
+]
+```
+
+Then:
+
+```python
+image_ids = [
+    "img_1",
+    "img_2",
+    "img_3"
+]
+```
+
+are generated. 
+
+The final `ClaimContext` contains:
+
+```python
+ctx.image_path_list
+ctx.image_ids
+```
+
+which are lists rather than single values.
+
+---
+
+# 2. OpenCV Validation Layer
+
+Although you haven't shown that file yet, we can infer from:
+
+```python
+ctx.valid_images_count
+ctx.image_quality_flags
+```
+
+that each image is individually checked.
+
+Example:
+
+```text
+img_1 -> valid
+img_2 -> blurry
+img_3 -> valid
+```
+
+Results:
+
+```python
+valid_images_count = 2
+```
+
+The claim is not discarded because one image failed.
+
+The pipeline reasons about:
+
+```text
+usable images
+```
+
+rather than:
+
+```text
+all images must pass
+```
+
+---
+
+# 3. Gemini Receives ALL Images
+
+The VLM stage gets:
+
+```python
+ctx.image_path_list
+```
+
+which contains every image.
+
+So Gemini sees:
+
+```text
+Image 1
+Image 2
+Image 3
+```
+
+within the same prompt.
+
+This allows cross-image reasoning.
+
+Example:
+
+### Image 1
+
+```text
+Front bumper
+```
+
+### Image 2
+
+```text
+Close-up crack
+```
+
+### Image 3
+
+```text
+Vehicle VIN
+```
+
+A single image alone may be insufficient, but together they provide enough evidence.
+
+---
+
+# 4. Evidence Can Be Distributed Across Images
+
+The system is designed for situations like:
+
+### Claim
+
+```text
+My front bumper is cracked.
+```
+
+### Image 1
+
+```text
+Shows entire car
+```
+
+### Image 2
+
+```text
+Shows crack
+```
+
+### Image 3
+
+```text
+Shows another angle
+```
+
+Gemini can conclude:
+
+```text
+Supported
+```
+
+even though no single image contains all evidence.
+
+This is one of the main advantages of multi-image processing.
+
+---
+
+# 5. Escalation Agent Sends Every Image To Qwen
+
+Inside `_call_qwen()`:
+
+```python
+for img_path in ctx.image_path_list:
+```
+
+Every image is processed.
+
+For each image it adds:
+
+```text
+=== IMAGE img_1 ===
+```
+
+then the actual image.
+
+Then:
+
+```text
+=== IMAGE img_2 ===
+```
+
+then the image.
+
+Then:
+
+```text
+=== IMAGE img_3 ===
+```
+
+and so on. 
+
+So Qwen sees something like:
+
+```text
+User Claim
+
+IMAGE img_1
+<image>
+
+IMAGE img_2
+<image>
+
+IMAGE img_3
+<image>
+```
+
+This is deliberate.
+
+---
+
+# 6. Image Anchoring
+
+The reason for:
+
+```text
+=== IMAGE img_1 ===
+```
+
+is so the model can ground evidence.
+
+Instead of:
+
+```json
+{
+  "supporting_image_ids":"some_image"
+}
+```
+
+it can return:
+
+```json
+{
+  "supporting_image_ids":"img_2"
+}
+```
+
+because it knows exactly which image showed the damage. 
+
+---
+
+# 7. Conflicting Images Are A Known Escalation Case
+
+Notice the file header:
+
+```text
+Triggered when:
+Multiple images with conflicting evidence
+```
+
+for escalation. 
+
+Example:
+
+### Image 1
+
+```text
+Visible crack
+```
+
+### Image 2
+
+```text
+No crack visible
+```
+
+### Image 3
+
+```text
+Different vehicle
+```
+
+Gemini may become uncertain:
+
+```json
+{
+  "claim_status":"not_enough_information"
+}
+```
+
+or produce contradiction signals.
+
+Then the claim is escalated to Qwen for a second opinion.
+
+---
+
+# 8. Supporting Image Selection
+
+The VLM can return:
+
+```json
+{
+  "supporting_image_ids":"img_2;img_3"
+}
+```
+
+meaning:
+
+```text
+These images justify my decision.
+```
+
+Later post-processing validates those IDs against:
+
+```python
+ctx.image_ids
+```
+
+to ensure the model didn't hallucinate:
+
+```json
+{
+  "supporting_image_ids":"img_99"
+}
+```
+
+which doesn't exist. 
+
+---
+
+# 9. Evidence Sufficiency Uses Aggregate Images
+
+Notice the logic:
+
+```python
+ctx.valid_images_count
+```
+
+rather than:
+
+```python
+current_image_valid
+```
+
+Most evidence checks operate at the claim level.
+
+Example:
+
+```text
+img_1 invalid
+img_2 valid
+img_3 valid
+```
+
+gives:
+
+```python
+valid_images_count = 2
+```
+
+The claim still has usable evidence.
+
+Only when:
+
+```python
+valid_images_count == 0
+```
+
+does the system force:
+
+```python
+evidence_standard_met = False
+```
+
+and potentially:
+
+```python
+claim_status = not_enough_information
+```
+
+regardless of what the VLM said. 
+
+---
+
+# Example End-to-End
+
+Suppose:
+
+```text
+Claim:
+"My windshield is shattered."
+```
+
+Images:
+
+```text
+img_1 -> Full car
+img_2 -> Close-up shattered windshield
+img_3 -> Side angle
+```
+
+Pipeline:
+
+```text
+Ingestion
+  ↓
+Creates image_ids:
+img_1,img_2,img_3
+
+OpenCV
+  ↓
+3 valid images
+
+Gemini
+  ↓
+Uses all 3 images together
+
+Returns:
+supporting_image_ids = img_2
+
+Post Processor
+  ↓
+Verifies img_2 exists
+
+Output:
+Supported
+Evidence met
+Supporting image = img_2
+```
+
+So the architecture treats a multi-image claim as **one reasoning problem with multiple pieces of evidence**, where the models see all images together, can cite specific supporting images, and can escalate when different images tell conflicting stories.
