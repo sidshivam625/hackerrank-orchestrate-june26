@@ -474,12 +474,13 @@ class GeminiVLMAgent:
         # would create duplicate / conflicting signals.
         #
         # NOTE: possible_manipulation and non_original_image are intentionally
-        # NOT forbidden — they are *content* authenticity judgments that only
+        # NOT in this set — they are *content* authenticity judgments that only
         # the VLM can make from the pixels (screenshot, photo-of-photo, spliced
         # image). The rule layer never produces them, so stripping them here
         # made it impossible for the system to ever emit them, even though the
         # ground truth and the test set (e.g. "screenshots instead of original
-        # photos") require them.
+        # photos") require them. Final injection/watermark detection happens
+        # deterministically in postprocessor.py via transcribed image text.
         forbidden_model_flags = {
             "blurry_image", "cropped_or_obstructed", "low_light_or_glare",
             "user_history_risk", "manual_review_required",

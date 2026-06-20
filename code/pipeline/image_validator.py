@@ -114,12 +114,12 @@ class ImageValidator:
         flags: List[str] = []
         is_valid = True
 
-        # ---- 2. Blur detection (Laplacian variance) ----
-        # A higher variance means more edges (less blur).
+        # ---- 1. Blur detection (Laplacian variance) ----
+        # A higher variance means more edges (sharper image). Low variance → blurry.
         blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         if blur_score < self.blur_threshold:
             flags.append("blurry_image")
-            # We no longer set is_valid = False because many phone photos are flagged but still legible.
+            # is_valid stays True — many phone photos score low but are still legible to the VLM.
 
         # ---- 2. Brightness / exposure ----
         brightness = float(np.mean(gray))
@@ -178,7 +178,7 @@ class ImageValidator:
             results.append(result)
             all_flags.extend(result.flags)
 
-        # De-duplicate while preserving order
+        # De-duplicate while preserving first-seen order (dict side-effect trick)
         seen: Dict[str, bool] = {}
         unique_flags = [f for f in all_flags if not (f in seen or seen.update({f: True}))]  # type: ignore
 

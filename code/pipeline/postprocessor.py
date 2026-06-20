@@ -122,6 +122,9 @@ def _scan_image_text_for_non_original(image_text: str) -> bool:
     return any(m in t for m in NON_ORIGINAL_TEXT_MARKERS)
 
 
+# Ontology map: for each (claim_object, object_part) pair, defines the issue types
+# that are physically plausible. The VLM occasionally produces cross-category mismatches
+# (e.g. torn_packaging on a car door) — we remap those to "unknown" rather than propagate.
 ONTOLOGY_MAP = {
     "car": {
         "windshield": {"crack", "glass_shatter", "scratch", "none", "unknown"},
